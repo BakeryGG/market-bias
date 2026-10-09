@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0e1013">
+<title>Market Bias</title>
+<style>
+:root{
+  --bg:#0e1013;--card:#16191e;--line:#242931;--text:#e7e9ee;--mute:#8a919e;
+  --bull:#3fbf7f;--bull-bg:rgba(63,191,127,.14);--bear:#e5615f;--bear-bg:rgba(229,97,95,.14);
+  --neu:#9aa3b2;--seg:#1d2128;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e3e6eb;--text:#16191e;--mute:#6b7280;
+  --bull:#1f9a5c;--bull-bg:rgba(31,154,92,.12);--bear:#cc3f3d;--bear-bg:rgba(204,63,61,.11);
+  --neu:#6b7280;--seg:#eef0f3}
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:520px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) 14px 32px}
+header{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 12px}
+h1{font-size:15px;font-weight:600;letter-spacing:.02em;color:var(--mute);margin:0;text-transform:uppercase}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+.reset{padding:10px 14px;border-radius:10px;color:var(--mute);border:1px solid var(--line);min-height:44px}
+.reset:active{opacity:.7}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px 18px 16px;margin-bottom:14px}
+.verdict{font-size:30px;font-weight:700;letter-spacing:-.01em;line-height:1.1;transition:color .2s}
+.sub{display:flex;justify-content:space-between;color:var(--mute);margin-top:6px;font-variant-numeric:tabular-nums}
+.pct{font-weight:600}
+.meter{position:relative;height:10px;border-radius:6px;margin-top:14px;
+  background:linear-gradient(90deg,var(--bear-bg),var(--seg) 50%,var(--bull-bg))}
+.meter::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--line)}
+.fill{position:absolute;top:0;bottom:0;border-radius:6px;transition:all .25s}
+.list{display:grid;gap:10px}
+.row{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;transition:background .2s,border-color .2s}
+.row.bull{background:var(--bull-bg);border-color:transparent}
+.row.bear{background:var(--bear-bg);border-color:transparent}
+.top{display:flex;align-items:center;gap:10px}
+.name{flex:1;font-weight:600;font-size:16px}
+.dir{display:flex;gap:6px}
+.dir button{min-width:64px;min-height:44px;padding:0 12px;border-radius:11px;background:var(--seg);color:var(--mute);font-weight:600;font-size:14px}
+.dir button.on[data-d="1"]{background:var(--bull);color:#fff}
+.dir button.on[data-d="-1"]{background:var(--bear);color:#fff}
+.str{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:10px;background:var(--seg);border-radius:11px;padding:3px}
+.str button{min-height:40px;border-radius:9px;color:var(--mute);font-weight:600;font-variant-numeric:tabular-nums}
+.str button.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.row.off .str{opacity:.45}
+.bull-t{color:var(--bull)}.bear-t{color:var(--bear)}.neu-t{color:var(--neu)}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Market Bias</h1><button class="reset" id="reset" aria-label="Reset all">Reset</button></header>
+  <section class="summary" aria-live="polite">
+    <div class="verdict" id="verdict">Neutral</div>
+    <div class="sub"><span id="counts">0 bull · 0 bear</span><span class="pct" id="pct">0%</span></div>
+    <div class="meter"><div class="fill" id="fill"></div></div>
+  </section>
+  <section class="list" id="list"></section>
+</main>
+<script>
+const INDICATORS=["Gamma","RSI","Divergence","TRAMA","VWAP"];
+const KEY="market-bias:v1";
+// Pure scoring: items = [{dir:-1|0|1, str:1..5}] -> score in [-1,1]
+function score(items){
+  let sum=0,max=0,bull=0,bear=0;
+  for(const it of items){ if(!it.dir) continue; sum+=it.dir*it.str; max+=it.str; it.dir>0?bull++:bear++; }
+  return {score:max?sum/max:0,bull,bear,active:bull+bear};
+}
+// Thresholds on |score|: <0.15 Neutral, <0.40 Lean, <0.70 plain, >=0.70 Strong
+function verdict(s){
+  const a=Math.abs(s), side=s>0?"Bullish":"Bearish";
+  if(a<0.15) return "Neutral";
+  if(a<0.40) return "Lean "+side;
+  if(a<0.70) return side;
+  return "Strong "+side;
+}
+const def=()=>Object.fromEntries(INDICATORS.map(n=>[n,{dir:0,str:3}]));
+let state;
+try{ state=Object.assign(def(),JSON.parse(localStorage.getItem(KEY))||{}); }catch(e){ state=def(); }
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}};
+const list=document.getElementById("list");
+function render(){
+  list.innerHTML="";
+  for(const n of INDICATORS){
+    const v=state[n], row=document.createElement("div");
+    row.className="row "+(v.dir>0?"bull":v.dir<0?"bear":"off");
+    row.innerHTML=`<div class="top"><div class="name">${n}</div><div class="dir">
+      <button data-d="1" class="${v.dir>0?"on":""}" aria-pressed="${v.dir>0}">Bull</button>
+      <button data-d="-1" class="${v.dir<0?"on":""}" aria-pressed="${v.dir<0}">Bear</button></div></div>
+      <div class="str" role="group" aria-label="${n} strength">${[1,2,3,4,5].map(i=>`<button data-s="${i}" class="${v.str===i?"on":""}" aria-pressed="${v.str===i}">${i}</button>`).join("")}</div>`;
+    row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const d=+b.dataset.d;v.dir=v.dir===d?0:d;update()});
+    row.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{v.str=+b.dataset.s;update()});
+    list.appendChild(row);
+  }
+  const r=score(INDICATORS.map(n=>state[n])), vd=r.active?verdict(r.score):"Neutral";
+  const el=document.getElementById("verdict");
+  el.textContent=r.active?vd:"No signals";
+  el.className="verdict "+(vd==="Neutral"?"neu-t":r.score>0?"bull-t":"bear-t");
+  const p=Math.round(r.score*100);
+  document.getElementById("pct").textContent=(p>0?"+":"")+p+"%";
+  document.getElementById("counts").textContent=`${r.bull} bull · ${r.bear} bear`;
+  const f=document.getElementById("fill"), w=Math.abs(r.score)*50;
+  f.style.left=(r.score>=0?50:50-w)+"%"; f.style.width=w+"%";
+  f.style.background=r.score>=0?"var(--bull)":"var(--bear)";
+}
+function update(){save();render()}
+document.getElementById("reset").onclick=()=>{state=def();update()};
+render();
+</script>
+</body>
+</html>
