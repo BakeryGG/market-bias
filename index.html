@@ -10,12 +10,12 @@
 :root{
   --bg:#0e1013;--card:#16191e;--line:#242931;--text:#e7e9ee;--mute:#8a919e;
   --bull:#3fbf7f;--bull-bg:rgba(63,191,127,.14);--bear:#e5615f;--bear-bg:rgba(229,97,95,.14);
-  --neu:#9aa3b2;--seg:#1d2128;
+  --neu:#9aa3b2;--neu-bg:rgba(154,163,178,.12);--seg:#1d2128;
 }
 @media (prefers-color-scheme: light){
   :root{--bg:#f5f6f8;--card:#fff;--line:#e3e6eb;--text:#16191e;--mute:#6b7280;
   --bull:#1f9a5c;--bull-bg:rgba(31,154,92,.12);--bear:#cc3f3d;--bear-bg:rgba(204,63,61,.11);
-  --neu:#6b7280;--seg:#eef0f3}
+  --neu:#6b7280;--neu-bg:rgba(107,114,128,.10);--seg:#eef0f3}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--text);
@@ -41,9 +41,11 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 .top{display:flex;align-items:center;gap:10px}
 .name{flex:1;font-weight:600;font-size:16px}
 .dir{display:flex;gap:6px}
-.dir button{min-width:64px;min-height:44px;padding:0 12px;border-radius:11px;background:var(--seg);color:var(--mute);font-weight:600;font-size:14px}
+.dir button{min-width:58px;min-height:44px;padding:0 10px;border-radius:11px;background:var(--seg);color:var(--mute);font-weight:600;font-size:14px}
 .dir button.on[data-d="1"]{background:var(--bull);color:#fff}
 .dir button.on[data-d="-1"]{background:var(--bear);color:#fff}
+.dir button.on[data-d="n"]{background:var(--neu);color:#fff}
+.row.neu{background:var(--neu-bg);border-color:transparent}
 .str{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:10px;background:var(--seg);border-radius:11px;padding:3px}
 .str button{min-height:40px;border-radius:9px;color:var(--mute);font-weight:600;font-variant-numeric:tabular-nums}
 .str button.on{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.25)}
@@ -56,7 +58,7 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
   <header><h1>Market Bias</h1><button class="reset" id="reset" aria-label="Reset all">Reset</button></header>
   <section class="summary" aria-live="polite">
     <div class="verdict" id="verdict">Neutral</div>
-    <div class="sub"><span id="counts">0 bull · 0 bear</span><span class="pct" id="pct">0%</span></div>
+    <div class="sub"><span id="counts">0 bull · 0 neutral · 0 bear</span><span class="pct" id="pct">0%</span></div>
     <div class="meter"><div class="fill" id="fill"></div></div>
   </section>
   <section class="list" id="list"></section>
@@ -64,11 +66,16 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 <script>
 const INDICATORS=["Gamma","RSI","Divergence","TRAMA","VWAP"];
 const KEY="market-bias:v1";
-// Pure scoring: items = [{dir:-1|0|1, str:1..5}] -> score in [-1,1]
+// Pure scoring: items = [{dir:1 bull|-1 bear|"n" neutral|0 unset, str:1..5}] -> score in [-1,1]
 function score(items){
   let sum=0,max=0,bull=0,bear=0;
-  for(const it of items){ if(!it.dir) continue; sum+=it.dir*it.str; max+=it.str; it.dir>0?bull++:bear++; }
-  return {score:max?sum/max:0,bull,bear,active:bull+bear};
+  let neu=0;
+  for(const it of items){
+    if(it.dir==="n"){ max+=it.str; neu++; continue; }  // neutral: 0 in numerator, counts in denominator
+    if(it.dir!==1&&it.dir!==-1) continue;              // unset: excluded
+    sum+=it.dir*it.str; max+=it.str; it.dir>0?bull++:bear++;
+  }
+  return {score:max?sum/max:0,bull,neu,bear,active:bull+neu+bear};
 }
 // Thresholds on |score|: <0.15 Neutral, <0.40 Lean, <0.70 plain, >=0.70 Strong
 function verdict(s){
@@ -87,12 +94,13 @@ function render(){
   list.innerHTML="";
   for(const n of INDICATORS){
     const v=state[n], row=document.createElement("div");
-    row.className="row "+(v.dir>0?"bull":v.dir<0?"bear":"off");
+    row.className="row "+(v.dir==="n"?"neu":v.dir===1?"bull":v.dir===-1?"bear":"off");
     row.innerHTML=`<div class="top"><div class="name">${n}</div><div class="dir">
-      <button data-d="1" class="${v.dir>0?"on":""}" aria-pressed="${v.dir>0}">Bull</button>
-      <button data-d="-1" class="${v.dir<0?"on":""}" aria-pressed="${v.dir<0}">Bear</button></div></div>
+      <button data-d="1" class="${v.dir===1?"on":""}" aria-pressed="${v.dir===1}">Bull</button>
+      <button data-d="n" class="${v.dir==="n"?"on":""}" aria-pressed="${v.dir==="n"}">Neutral</button>
+      <button data-d="-1" class="${v.dir===-1?"on":""}" aria-pressed="${v.dir===-1}">Bear</button></div></div>
       <div class="str" role="group" aria-label="${n} strength">${[1,2,3,4,5].map(i=>`<button data-s="${i}" class="${v.str===i?"on":""}" aria-pressed="${v.str===i}">${i}</button>`).join("")}</div>`;
-    row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const d=+b.dataset.d;v.dir=v.dir===d?0:d;update()});
+    row.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{const d=b.dataset.d==="n"?"n":+b.dataset.d;v.dir=v.dir===d?0:d;update()});
     row.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{v.str=+b.dataset.s;update()});
     list.appendChild(row);
   }
@@ -102,7 +110,7 @@ function render(){
   el.className="verdict "+(vd==="Neutral"?"neu-t":r.score>0?"bull-t":"bear-t");
   const p=Math.round(r.score*100);
   document.getElementById("pct").textContent=(p>0?"+":"")+p+"%";
-  document.getElementById("counts").textContent=`${r.bull} bull · ${r.bear} bear`;
+  document.getElementById("counts").textContent=`${r.bull} bull · ${r.neu} neutral · ${r.bear} bear`;
   const f=document.getElementById("fill"), w=Math.abs(r.score)*50;
   f.style.left=(r.score>=0?50:50-w)+"%"; f.style.width=w+"%";
   f.style.background=r.score>=0?"var(--bull)":"var(--bear)";
